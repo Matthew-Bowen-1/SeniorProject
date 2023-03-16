@@ -1,9 +1,6 @@
 #include <MIDI.h>
 MIDI_CREATE_DEFAULT_INSTANCE();
-
-
 /*For non musicians, 'b' indicates a flat note
-
   C  0
   Db 1
   D  2
@@ -16,7 +13,6 @@ MIDI_CREATE_DEFAULT_INSTANCE();
   A  9
   Bb 10
   B  11
-
 */
 
 byte busVal = 0B11111111;
@@ -202,10 +198,8 @@ void loop() {
       configState = false;
       control = doNothing;
       PORTB = (busVal & ~controlMask) | (control & controlMask);
-    }
-        
+    }    
   }
-
 
   MIDI.read(); //Read for MIDI commands
 
@@ -231,5 +225,4 @@ void loop() {
     else{repeatCount++;}
   }
   PORTB = busVal;
-
 }
