@@ -63,6 +63,21 @@ void generateNoteIncrements(int bits){
 byte inputStatus = 0;
 byte prevInputStatus = 0;
 
+//Sound properties. Initialized within setup so that later they may be changed.
+byte         loudness; //Overall loudness
+byte         noteRange; //Range of notes
+//ADSR for carrier amplitude
+unsigned int carrierAttack;
+unsigned int carrierDecay;
+unsigned int carrierSustain;
+unsigned int carrierRelease;
+
+unsigned int FMRatio;//Ratio relative to carrier where carrier = 256 
+unsigned int FMAttack; 
+unsigned int FMDecay;
+unsigned int FMSustain;
+unsigned int FMRelease;
+
 void setup() {
   // put your setup code here, to run once:
   noInterrupts();
@@ -97,6 +112,21 @@ void setup() {
   inputStatus = PIND; //All musical input comes from PIND
   //prevInputStatus = inputStatus; 
   //Initialize prevInputStatus so nothing happens on startup. May remove later.
+
+  //Basic default setup. Hopefully makes good sound. 
+  loudness = 64; //Leave for all instruments
+  noteRange = loMid; 
+
+  carrierAttack = 4096;
+  carrierDecay = 1024;
+  carrierSustain = 220;
+  carrierRelease = 768;
+
+  FMRatio = 128; 
+  FMAttack = 2048; 
+  FMDecay = 128;
+  FMSustain = 128;
+  FMRelease = 768;
 }
 
 /*
@@ -159,6 +189,7 @@ inline void updatePulseWidth() {
   OCR1A = pulseWidth/128 + 256;
 }
 
+//Macros for input interpretation
 #define idle 255
 #define doNothing 0B00000011
 #define noteOn 0B00000010
@@ -167,6 +198,13 @@ inline void updatePulseWidth() {
 byte controlMask = 0B11000000;
 byte octMask = 0B00110000;
 byte noteMask = 0B00001111;
+
+//Macros for envelope status.
+#define off 0
+#define attack 1
+#define decay 2
+#define sustain 3
+#define release 4
 
 /*
   ADSR: Attack, Decay, Sustain, Release
@@ -184,52 +222,92 @@ byte noteMask = 0B00001111;
   3 - Level of plateau determined by sustain parameter.
   4 - Slope of final downward motion determined by release parameter.
 */
-unsigned int loudness = 64; //Overall loudness
-//ADSR for carrier amplitude
-unsigned int carrierAttack = 4096;
-unsigned int carrierDecay = 1024;
-unsigned int carrierSustain = 255;
-unsigned int carrierRelease = 768;
-
-unsigned int FMRatio = 128; //Ratio relative to carrier where carrier = 256 
-unsigned int FMAttack = 512; 
-unsigned int FMDecay = 128;
-unsigned int FMSustain = 128;
-unsigned int FMRelease = 768;
 
 //Global note properties
-byte carrierEnvelopeStatus[4] = {0,0,0,0}; //Status of carrier envelope
-unsigned int carrierEnvelopeValue[4] = {0,0,0,0}; //Value/position of envelope.
-unsigned int carrierEnvelopeAttack = 0; //Attack value
-unsigned int carrierEnvelopeDecay = 0; //Decay value
-unsigned int carrierEnvelopeSustain = 0; //Sustain value
-unsigned int carrierEnvelopeRelease = 0; //Release value
-byte carrierAmplitude = 0; //General amplitude value
-//Amount by which to increment index of sine table. 
+byte notesPlaying[4] = {0,0,0,0};
+//Which notes are being played
+unsigned int noteDuration[4] = {0,0,0,0};
+byte carrierEnvelopeStatus[4] = {0,0,0,0}; 
+//State of carrier envelope. 
+//0 = off, 1 = attack, 2 = decay, 3 = sustain, 4 = release
+unsigned int carrierEnvelopeValue[4] = {0,0,0,0}; 
+//Value/position of envelope
+unsigned int carrierEnvelopeAttack = 0; 
+//Attack value
+unsigned int carrierEnvelopeDecay = 0; 
+//Decay value
+unsigned int carrierEnvelopeSustain = 0; 
+//Sustain value
+unsigned int carrierEnvelopeRelease = 0; 
+//Release value
+byte volume = 0; 
+//digital volume value
 unsigned int carrierNoteIncrement[4] = {0,0,0,0}; 
-byte noteRange = loMid;
+//Note sine table increment
+unsigned int FMNoteIncrement[4] = {0,0,0,0}; 
+//FM sine table increment
+unsigned int FMEnvelopeStaus[4] = {0,0,0,0};
+//State of FM envelope. Same values as with the carrier envelope.
+unsigned int FMEnvelopeAttack = 0; 
+//FM attack value
+unsigned int FMEnvelopeDecay = 0; 
+//FM decay value
+unsigned int FMEnvelopeSustain = 0; 
+//FM sustain value
+unsigned int FMEnvelopeRelease = 0; 
+//FM release value
 
 void loop() {
   //First, get input and interpret it. 
 
   prevInputStatus = inputStatus;
   inputStatus = PIND;
-  byte pressedNote;
-  byte releasedNote;
+  byte pressedNote = 255;
+  byte releasedNote = 255;
+  
   if(inputStatus != prevInputStatus){
     if(inputStatus != idle){
       byte controlVal = (inputStatus & controlMask) >> 6;
+
       //Convert 2-bit octave and 4-bit note codes into single 0-47 range value. 
-      byte noteVal = (inputStatus & noteMask) + (12 * ((inputStatus & octMask) >> 4));
       if(controlVal == noteOn){
-        pressedNote = noteVal;
+        pressedNote = (inputStatus & noteMask) + (12 * ((inputStatus & octMask) >> 4));
       }
       if(controlVal == noteOff){
-        releasedNote = noteVal;
+        releasedNote = (inputStatus & noteMask) + (12 * ((inputStatus & octMask) >> 4));
+      }
+      if(controlVal == config){
+        //TODO: Implement config mode
       }
     }
   }
   updatePulseWidth();//1st call
+
+  byte channel = 255; //
+
   updatePulseWidth();//2nd call
 
+  //Check if the pressed note is being played
+  //This should only ever happen during the release portion of a note's ADSR
+  if(carrierEnvelopeStatus[0] != off && pressedNote == notesPlaying[0]) channel = 0;
+  if(carrierEnvelopeStatus[1] != off && pressedNote == notesPlaying[1]) channel = 1;
+  if(carrierEnvelopeStatus[2] != off && pressedNote == notesPlaying[2]) channel = 2;
+  if(carrierEnvelopeStatus[3] != off && pressedNote == notesPlaying[3]) channel = 3;
+
+  //Use a channel if it is empty
+  if(channel == 255){
+    if(carrierEnvelopeStatus[0] == off) channel = 0;
+    if(carrierEnvelopeStatus[1] == off) channel = 1;
+    if(carrierEnvelopeStatus[2] == off) channel = 2;
+    if(carrierEnvelopeStatus[3] == off) channel = 3;
+  }
+
+  //Determine the longest playing channel and use that
+  if(channel == 255){
+    channel = 0;
+    for(byte i=1; i<4; i++){
+      if(noteDuration[i] > noteDuration[channel]) channel = i;
+    }
+  }
+  updatePulseWidth();//3rd call
 }
