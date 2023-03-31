@@ -259,6 +259,55 @@ unsigned int FMEnvelopeSustain = 0;
 unsigned int FMEnvelopeRelease = 0; 
 //FM release value
 
+
+inline void getInputStatus(byte *inputStatus, byte *pressedNote, byte *releasedNote) __attribute__((always_inline));
+inline void getInputStatus(byte *inputStatus, byte *pressedNote, byte *releasedNote){
+  byte controlVal = (*inputStatus & controlMask) >> 6;
+
+  //Convert 2-bit octave and 4-bit note codes into single 0-47 range value. 
+  if(controlVal == noteOn){
+    *pressedNote = (*inputStatus & noteMask) + (12 * ((*inputStatus & octMask) >> 4));
+  }
+  if(controlVal == noteOff){
+    *releasedNote = (*inputStatus & noteMask) + (12 * ((*inputStatus & octMask) >> 4));
+  }
+  if(controlVal == config){
+    //TODO: Implement config mode
+  }
+}
+
+inline void assignChannel(byte *pressedNote, byte *channel) __attribute__((always_inline));
+inline void assignChannel(byte *pressedNote, byte *channel){
+  //Check if the pressed note is being played
+  //This should only ever happen during the release portion of a note's ADSR
+  if(carrierEnvelopeStatus[0] != off && *pressedNote == notesPlaying[0]) *channel = 0;
+  if(carrierEnvelopeStatus[1] != off && *pressedNote == notesPlaying[1]) *channel = 1;
+  if(carrierEnvelopeStatus[2] != off && *pressedNote == notesPlaying[2]) *channel = 2;
+  if(carrierEnvelopeStatus[3] != off && *pressedNote == notesPlaying[3]) *channel = 3;
+
+  //Use a channel if it is empty
+  if(*channel == 255){
+    if(carrierEnvelopeStatus[0] == off) *channel = 0;
+    if(carrierEnvelopeStatus[1] == off) *channel = 1;
+    if(carrierEnvelopeStatus[2] == off) *channel = 2;
+    if(carrierEnvelopeStatus[3] == off) *channel = 3;
+  }
+
+  //Determine the longest playing channel and use that
+  if(*channel == 255){
+    *channel = 0;
+    for(byte i=1; i<4; i++){
+      if(noteDuration[i] > noteDuration[*channel]) *channel = i;
+    }
+  }
+}
+
+/*
+  The use of inline functions here is because I feel it is easier to understand
+  when the code is layed out this way. This way I should be able to get the 
+  runtime benefit as if I wrote all the code inline in the loop but without the
+  spaghetti mess.
+*/
 void loop() {
   //First, get input and interpret it. 
 
@@ -269,18 +318,7 @@ void loop() {
   
   if(inputStatus != prevInputStatus){
     if(inputStatus != idle){
-      byte controlVal = (inputStatus & controlMask) >> 6;
-
-      //Convert 2-bit octave and 4-bit note codes into single 0-47 range value. 
-      if(controlVal == noteOn){
-        pressedNote = (inputStatus & noteMask) + (12 * ((inputStatus & octMask) >> 4));
-      }
-      if(controlVal == noteOff){
-        releasedNote = (inputStatus & noteMask) + (12 * ((inputStatus & octMask) >> 4));
-      }
-      if(controlVal == config){
-        //TODO: Implement config mode
-      }
+      getInputStatus(&inputStatus, &pressedNote, &releasedNote);
     }
   }
   updatePulseWidth();//1st call
@@ -289,27 +327,7 @@ void loop() {
 
   updatePulseWidth();//2nd call
 
-  //Check if the pressed note is being played
-  //This should only ever happen during the release portion of a note's ADSR
-  if(carrierEnvelopeStatus[0] != off && pressedNote == notesPlaying[0]) channel = 0;
-  if(carrierEnvelopeStatus[1] != off && pressedNote == notesPlaying[1]) channel = 1;
-  if(carrierEnvelopeStatus[2] != off && pressedNote == notesPlaying[2]) channel = 2;
-  if(carrierEnvelopeStatus[3] != off && pressedNote == notesPlaying[3]) channel = 3;
+  assignChannel(&pressedNote, &channel);
 
-  //Use a channel if it is empty
-  if(channel == 255){
-    if(carrierEnvelopeStatus[0] == off) channel = 0;
-    if(carrierEnvelopeStatus[1] == off) channel = 1;
-    if(carrierEnvelopeStatus[2] == off) channel = 2;
-    if(carrierEnvelopeStatus[3] == off) channel = 3;
-  }
-
-  //Determine the longest playing channel and use that
-  if(channel == 255){
-    channel = 0;
-    for(byte i=1; i<4; i++){
-      if(noteDuration[i] > noteDuration[channel]) channel = i;
-    }
-  }
   updatePulseWidth();//3rd call
 }
