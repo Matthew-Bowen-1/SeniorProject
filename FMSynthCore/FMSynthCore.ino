@@ -1,6 +1,8 @@
 /*
   FM Synthesizer Core
   Written for Arduino Uno R3
+  Matt Bowen 
+  InlineBranch
 */
 
 //Macros for selecting timer bit resolution
