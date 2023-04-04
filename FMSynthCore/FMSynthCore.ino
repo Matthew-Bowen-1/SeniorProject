@@ -5,10 +5,6 @@
   InlineBranch
 */
 
-//Macros for selecting timer bit resolution
-#define eightBit 0B10000001 
-#define nineBit  0B10000010
-#define tenBit   0B10000011
 /*
   Instead of attempting to generate the sine waves arithematically,
   generate a wavetable at startup to use instead. Also easier than
@@ -66,19 +62,21 @@ byte inputStatus = 0;
 byte prevInputStatus = 0;
 
 //Sound properties. Initialized within setup so that later they may be changed.
-byte         loudness; //Overall loudness
-byte         noteRange; //Range of notes
+byte         loudness = 64; //Overall loudness
+byte         noteRange = loMid; //Range of notes
 //ADSR for carrier amplitude
-unsigned int carrierAttack;
-unsigned int carrierDecay;
-unsigned int carrierSustain;
-unsigned int carrierRelease;
+unsigned int carrierAttack = 4096;
+unsigned int carrierDecay = 1024;
+unsigned int carrierSustain = 220;
+unsigned int carrierRelease = 768;
 
-unsigned int FMRatio;//Ratio relative to carrier where carrier = 256 
-unsigned int FMAttack; 
-unsigned int FMDecay;
-unsigned int FMSustain;
-unsigned int FMRelease;
+unsigned int FMRatio = 128;//Ratio relative to carrier where carrier = 256 
+unsigned int FMAttack = 2048; 
+unsigned int FMDecay = 128;
+unsigned int FMSustain = 128;
+unsigned int FMRelease = 768;
+
+//Basic default setup. Hopefully makes good sound. 
 
 void setup() {
   // put your setup code here, to run once:
@@ -106,7 +104,7 @@ void setup() {
       TCCR1A = 0B10000011
       TCCR1B = 0B00001001
   */
-  TCCR1A = nineBit;
+  TCCR1A = 0B10000010;
   TCCR1B = 0B00001001; //Same for all 3 modes
   //Only use Port D pins for input from controller
   DDRD = 0B00000000; //Set all pins of Port D to input
@@ -114,21 +112,6 @@ void setup() {
   inputStatus = PIND; //All musical input comes from PIND
   //prevInputStatus = inputStatus; 
   //Initialize prevInputStatus so nothing happens on startup. May remove later.
-
-  //Basic default setup. Hopefully makes good sound. 
-  loudness = 64; //Leave for all instruments
-  noteRange = loMid; 
-
-  carrierAttack = 4096;
-  carrierDecay = 1024;
-  carrierSustain = 220;
-  carrierRelease = 768;
-
-  FMRatio = 128; 
-  FMAttack = 2048; 
-  FMDecay = 128;
-  FMSustain = 128;
-  FMRelease = 768;
 }
 
 /*
@@ -245,11 +228,13 @@ unsigned int carrierEnvelopeRelease = 0;
 byte volume = 0; 
 //digital volume value
 unsigned int carrierNoteIncrement[4] = {0,0,0,0}; 
-//Note sine table increment
+//Note's sine table increment
 unsigned int FMNoteIncrement[4] = {0,0,0,0}; 
 //FM sine table increment
-unsigned int FMEnvelopeStaus[4] = {0,0,0,0};
+byte FMEnvelopeStatus[4] = {0,0,0,0};
 //State of FM envelope. Same values as with the carrier envelope.
+unsigned int FMEnvelopeValue[4] = {0,0,0,0};
+//Value of FM envelope for each channel
 unsigned int FMEnvelopeAttack = 0; 
 //FM attack value
 unsigned int FMEnvelopeDecay = 0; 
@@ -260,8 +245,8 @@ unsigned int FMEnvelopeRelease = 0;
 //FM release value
 
 
-inline void getInputStatus(byte *inputStatus, byte *pressedNote, byte *releasedNote) __attribute__((always_inline));
-inline void getInputStatus(byte *inputStatus, byte *pressedNote, byte *releasedNote){
+inline void getNoteStatus(byte *inputStatus, byte *pressedNote, byte *releasedNote) __attribute__((always_inline));
+inline void getNoteStatus(byte *inputStatus, byte *pressedNote, byte *releasedNote){
   byte controlVal = (*inputStatus & controlMask) >> 6;
 
   //Convert 2-bit octave and 4-bit note codes into single 0-47 range value. 
@@ -302,10 +287,75 @@ inline void assignChannel(byte *pressedNote, byte *channel){
   }
 }
 
+inline void startNote(byte *channel, byte *pressedNote) __attribute__((always_inline));
+inline void startNote(byte *channel, byte *pressedNote){
+  carrierPhaseIdx[*channel] = 0;
+  volume = loudness; //This is only to allow me to modify the volume 
+  if(noteRange == high){carrierNoteIncrement[*channel] = noteIncHigh[*pressedNote];}
+  else if(noteRange == loMid){carrierNoteIncrement[*channel] = noteIncLoMid[*pressedNote];}
+  else if(noteRange == hiMid){carrierNoteIncrement[*channel] = noteIncHiMid[*pressedNote];}
+  else{carrierNoteIncrement[*channel] = noteIncBass[*pressedNote];}
+  FMPhaseIdx[*channel] = 0;
+  FMNoteIncrement[*channel] = ((long)carrierNoteIncrement[*channel]*FMRatio)/256;
+  carrierEnvelopeAttack = carrierAttack;
+  carrierEnvelopeDecay = carrierDecay;
+  carrierEnvelopeSustain = carrierSustain << 8;
+  carrierEnvelopeRelease = carrierRelease;
+  carrierEnvelopeStatus[*channel] = attack;
+  FMEnvelopeAttack = FMAttack;
+  FMEnvelopeDecay = FMDecay;
+  FMEnvelopeSustain = FMSustain;
+  FMEnvelopeRelease = FMRelease;
+  FMEnvelopeStatus[*channel] = attack;
+  notesPlaying[*channel] = *pressedNote;
+  noteDuration[*channel] = 0;
+}
+
+inline void stopNote(byte *channel, byte *releasedNote) __attribute__((always_inline));
+inline void stopNote(byte *channel, byte *releasedNote){
+  if(notesPlaying[0] == *releasedNote)carrierEnvelopeStatus[0] = 4; //Release
+  if(notesPlaying[1] == *releasedNote)carrierEnvelopeStatus[1] = 4;
+  if(notesPlaying[2] == *releasedNote)carrierEnvelopeStatus[2] = 4;
+  if(notesPlaying[3] == *releasedNote)carrierEnvelopeStatus[3] = 4;
+}
+
+inline void calculateFMEnvelope() __attribute__((always_inline));
+inline void calculateFMEnvelope(){
+  for(int chan = 0; chan < 4; chan++){
+    switch(FMEnvelopeStatus[chan]){
+      case attack:
+        if((0xFFFF - FMEnvelopeValue[chan]) <= FMEnvelopeAttack){
+          FMEnvelopeValue[chan] = 0xFFFF;
+          FMEnvelopeStatus[chan] = decay;
+        }
+        else FMEnvelopeValue[chan] += FMEnvelopeAttack;
+        break;
+      case decay:
+        if(FMEnvelopeValue[chan] <= (FMEnvelopeSustain + FMEnvelopeDecay)){
+          FMEnvelopeValue[chan] = FMEnvelopeSustain;
+          FMEnvelopeStatus[chan] = sustain;
+        }
+        else FMEnvelopeValue[chan] -= FMEnvelopeDecay;
+        break;
+      case sustain:
+        break; //Nothing needed to be done
+      case release:
+        if(FMEnvelopeValue[chan] <= FMEnvelopeRelease){
+          FMEnvelopeValue[chan] = 0;
+          FMEnvelopeStatus[chan] = 0;
+        }
+        else FMEnvelopeValue[chan] -= FMEnvelopeRelease;
+        break;
+    }
+  } 
+}
+
+
+
 /*
   The use of inline functions here is because I feel it is easier to understand
   when the code is layed out this way. This way I should be able to get the 
-  runtime benefit as if I wrote all the code inline in the loop but without the
+  runtime benefit as if I wrote all the code inline in the loop but with less 
   spaghetti mess.
 */
 void loop() {
@@ -318,16 +368,37 @@ void loop() {
   
   if(inputStatus != prevInputStatus){
     if(inputStatus != idle){
-      getInputStatus(&inputStatus, &pressedNote, &releasedNote);
+      getNoteStatus(&inputStatus, &pressedNote, &releasedNote);
     }
   }
   updatePulseWidth();//1st call
 
-  byte channel = 255; //
+  byte channel = 255; 
 
   updatePulseWidth();//2nd call
 
   assignChannel(&pressedNote, &channel);
 
   updatePulseWidth();//3rd call
+
+  if(pressedNote != 255){
+    startNote(&channel, &pressedNote);
+  }
+
+  updatePulseWidth();//4th call
+
+  if(releasedNote != 255){
+    stopNote(&channel, &releasedNote);
+  }
+
+  updatePulseWidth();//5th call
+
+  calculateFMEnvelope();
+
+  updatePulseWidth();//6th call
+
+
+
+
+
 }
