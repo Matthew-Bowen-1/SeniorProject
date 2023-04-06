@@ -70,6 +70,7 @@ unsigned int carrierDecay = 1024;
 unsigned int carrierSustain = 220;
 unsigned int carrierRelease = 768;
 
+byte FMLoudness = 64;
 unsigned int FMRatio = 128;//Ratio relative to carrier where carrier = 256 
 unsigned int FMAttack = 2048; 
 unsigned int FMDecay = 128;
@@ -235,6 +236,7 @@ byte FMEnvelopeStatus[4] = {0,0,0,0};
 //State of FM envelope. Same values as with the carrier envelope.
 unsigned int FMEnvelopeValue[4] = {0,0,0,0};
 //Value of FM envelope for each channel
+byte FMVolume = 0;
 unsigned int FMEnvelopeAttack = 0; 
 //FM attack value
 unsigned int FMEnvelopeDecay = 0; 
@@ -291,12 +293,13 @@ inline void startNote(byte *channel, byte *pressedNote) __attribute__((always_in
 inline void startNote(byte *channel, byte *pressedNote){
   carrierPhaseIdx[*channel] = 0;
   volume = loudness; //This is only to allow me to modify the volume 
+  FMVolume = FMLoudness;
   if(noteRange == high){carrierNoteIncrement[*channel] = noteIncHigh[*pressedNote];}
   else if(noteRange == loMid){carrierNoteIncrement[*channel] = noteIncLoMid[*pressedNote];}
   else if(noteRange == hiMid){carrierNoteIncrement[*channel] = noteIncHiMid[*pressedNote];}
   else{carrierNoteIncrement[*channel] = noteIncBass[*pressedNote];}
   FMPhaseIdx[*channel] = 0;
-  FMNoteIncrement[*channel] = ((long)carrierNoteIncrement[*channel]*FMRatio)/256;
+  FMNoteIncrement[*channel] = ((long)carrierNoteIncrement[*channel] * FMRatio )/256;
   carrierEnvelopeAttack = carrierAttack;
   carrierEnvelopeDecay = carrierDecay;
   carrierEnvelopeSustain = carrierSustain << 8;
@@ -313,15 +316,28 @@ inline void startNote(byte *channel, byte *pressedNote){
 
 inline void stopNote(byte *channel, byte *releasedNote) __attribute__((always_inline));
 inline void stopNote(byte *channel, byte *releasedNote){
-  if(notesPlaying[0] == *releasedNote)carrierEnvelopeStatus[0] = 4; //Release
-  if(notesPlaying[1] == *releasedNote)carrierEnvelopeStatus[1] = 4;
-  if(notesPlaying[2] == *releasedNote)carrierEnvelopeStatus[2] = 4;
-  if(notesPlaying[3] == *releasedNote)carrierEnvelopeStatus[3] = 4;
+  //Set ADSR status to release
+  if(notesPlaying[0] == *releasedNote){
+    carrierEnvelopeStatus[0] = 4; 
+    FMEnvelopeStatus[0] = 4;
+  }
+  if(notesPlaying[1] == *releasedNote){
+    carrierEnvelopeStatus[1] = 4; 
+    FMEnvelopeStatus[1] = 4;
+  }
+  if(notesPlaying[2] == *releasedNote){
+    carrierEnvelopeStatus[2] = 4; 
+    FMEnvelopeStatus[2] = 4;
+  }
+  if(notesPlaying[3] == *releasedNote){
+    carrierEnvelopeStatus[3] = 4; 
+    FMEnvelopeStatus[3] = 4;
+  }
 }
 
 inline void calculateFMEnvelope() __attribute__((always_inline));
 inline void calculateFMEnvelope(){
-  for(int chan = 0; chan < 4; chan++){
+  for(byte chan = 0; chan < 4; chan++){
     switch(FMEnvelopeStatus[chan]){
       case attack:
         if((0xFFFF - FMEnvelopeValue[chan]) <= FMEnvelopeAttack){
@@ -350,8 +366,66 @@ inline void calculateFMEnvelope(){
   } 
 }
 
+inline void calculateCarrierEnvelope() __attribute__((always_inline));
+inline void calculateCarrierEnvelope(){
+  for (byte chan = 0; chan < 4; chan++){
+    switch(carrierEnvelopeStatus[chan]){
+      case attack:
+        if((0xFFFF - carrierEnvelopeValue[chan]) <= carrierEnvelopeAttack){
+          carrierEnvelopeValue[chan] = 0xFFFF;
+          carrierEnvelopeStatus[chan] = decay;
+        }
+        else carrierEnvelopeValue[chan] += carrierEnvelopeAttack;
+        break;
+      case decay:
+        if(carrierEnvelopeValue[chan] <= (carrierEnvelopeSustain + carrierEnvelopeDecay)){
+          carrierEnvelopeValue[chan] = carrierEnvelopeSustain;
+          carrierEnvelopeStatus[chan] = sustain;
+        }
+        else carrierEnvelopeValue[chan] -= carrierEnvelopeDecay;
+        break;
+      case sustain:
+        break; //No modification necesary
+      case release:
+        if(carrierEnvelopeValue[chan] <= carrierEnvelopeRelease){
+          carrierEnvelopeValue[chan] = 0;
+          carrierEnvelopeStatus[chan] = 0;
+        }
+        else carrierEnvelopeValue[chan] -= carrierEnvelopeRelease;
+        break;
+    }
 
+    noteDuration[chan]++;//do timing for note
+    updatePulseWidth();//7th-10th calls
+  }
+}
 
+inline void setEnvelopes() __attribute__((always_inline));
+inline void setEnvelopes(){
+  carrierAmplitude[0] = (volume * (carrierEnvelopeValue[0] >> 8)) >> 8;
+  carrierPhaseInc[0] = carrierNoteIncrement[0];
+  FMAmplitude[0] = (FMVolume * (FMEnvelopeValue[0] >> 8));
+  FMPhaseInc[0] = FMNoteIncrement[0];
+  updatePulseWidth();//11th call
+
+  carrierAmplitude[1] = (volume * (carrierEnvelopeValue[1] >> 8)) >> 8;
+  carrierPhaseInc[1] = carrierNoteIncrement[1];
+  FMAmplitude[1] = (FMVolume * (FMEnvelopeValue[1] >> 8));
+  FMPhaseInc[1] = FMNoteIncrement[1];
+  updatePulseWidth();//12th call
+
+  carrierAmplitude[2] = (volume * (carrierEnvelopeValue[2] >> 8)) >> 8;
+  carrierPhaseInc[2] = carrierNoteIncrement[2];
+  FMAmplitude[2] = (FMVolume * (FMEnvelopeValue[2] >> 8));
+  FMPhaseInc[2] = FMNoteIncrement[2];
+  updatePulseWidth();//13th call
+  
+  carrierAmplitude[3] = (volume * (carrierEnvelopeValue[3] >> 8)) >> 8;
+  carrierPhaseInc[3] = carrierNoteIncrement[3];
+  FMAmplitude[3] = (FMVolume * (FMEnvelopeValue[3] >> 8));
+  FMPhaseInc[3] = FMNoteIncrement[3];
+  updatePulseWidth();//14th call
+}
 /*
   The use of inline functions here is because I feel it is easier to understand
   when the code is layed out this way. This way I should be able to get the 
@@ -397,8 +471,13 @@ void loop() {
 
   updatePulseWidth();//6th call
 
+  calculateCarrierEnvelope();//7th-10th updatePulseWidth() calls are in here
 
+  setEnvelopes();//11th-14th updatePulseWidth() calls are in here
 
-
-
+  //Another update to note times
+  noteDuration[0]++;
+  noteDuration[1]++;
+  noteDuration[2]++;
+  noteDuration[3]++;
 }
