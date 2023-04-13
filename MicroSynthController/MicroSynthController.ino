@@ -212,17 +212,5 @@ void loop() {
 
   //set all pins of PORTB simultaneously 
 
-  //If the busVal has not changed and is not set to default, reset busVal.
-  if((prevBusVal != 255 && prevBusVal == busVal)){
-    //Let PORTB = busVal for a few cycles before next MIDI command is processed
-    if(repeatCount == 56){
-      repeatCount = 0;
-      noteVal = 0B00001111;
-      octVal = 0B00110000;
-      control = doNothing;
-      busVal = 0B11111111;
-    }
-    else{repeatCount++;}
-  }
   PORTB = busVal;
 }

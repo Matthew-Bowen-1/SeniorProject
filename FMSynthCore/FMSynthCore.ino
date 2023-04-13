@@ -63,22 +63,24 @@ byte prevInputStatus = 0;
 
 //Sound properties. Initialized within setup so that later they may be changed.
 byte         loudness = 64; //Overall loudness
-byte         noteRange = loMid; //Range of notes
+byte         noteRange = hiMid; //Range of notes
 //ADSR for carrier amplitude
 unsigned int carrierAttack = 4096;
-unsigned int carrierDecay = 1024;
+unsigned int carrierDecay = 512;
 unsigned int carrierSustain = 220;
-unsigned int carrierRelease = 768;
+unsigned int carrierRelease = 512;
 
-byte FMLoudness = 64;
+unsigned int FMLoudness = 2;
 unsigned int FMRatio = 128;//Ratio relative to carrier where carrier = 256 
-unsigned int FMAttack = 2048; 
+unsigned int FMAttack = 0xFFFF; 
 unsigned int FMDecay = 128;
-unsigned int FMSustain = 128;
-unsigned int FMRelease = 768;
-
+unsigned int FMSustain = 16384;
+unsigned int FMRelease = 82;
 //Basic default setup. Hopefully makes good sound. 
 
+//Used to set channel diagnostic bits.
+byte chanDebugMask[4];
+byte loopFlagMask;
 void setup() {
   // put your setup code here, to run once:
   noInterrupts();
@@ -111,8 +113,16 @@ void setup() {
   DDRD = 0B00000000; //Set all pins of Port D to input
   PORTD = 0B11111111; //Set all pins high for pullup input. 
   inputStatus = PIND; //All musical input comes from PIND
-  //prevInputStatus = inputStatus; 
-  //Initialize prevInputStatus so nothing happens on startup. May remove later.
+  prevInputStatus = inputStatus; 
+  //Initialize prevInputStatus so nothing happens on startup.
+
+  //Arduino Pins D14-D17 go high when a channel is playing. Used for debugging.
+  DDRC = DDRC | 0B00011111; //Set Port C pins 0-4 to output. 
+  PORTC = PORTC & 0B11100000; //Initialize Port C pins 0-4 to low.
+  for(int i = 0; i < 4; i++){
+    chanDebugMask[i] = 1 << i;
+  }
+  loopFlagMask = 1 << 4;
 }
 
 /*
@@ -312,26 +322,31 @@ inline void startNote(byte *channel, byte *pressedNote){
   FMEnvelopeStatus[*channel] = attack;
   notesPlaying[*channel] = *pressedNote;
   noteDuration[*channel] = 0;
+  PORTC |= (chanDebugMask[*channel]);//Set the corresponding debug pin high.
 }
 
-inline void stopNote(byte *channel, byte *releasedNote) __attribute__((always_inline));
-inline void stopNote(byte *channel, byte *releasedNote){
+inline void stopNote(byte *releasedNote) __attribute__((always_inline));
+inline void stopNote(byte *releasedNote){
   //Set ADSR status to release
   if(notesPlaying[0] == *releasedNote){
     carrierEnvelopeStatus[0] = 4; 
     FMEnvelopeStatus[0] = 4;
+    PORTC &=~ chanDebugMask[0];//Set corresponding debug pin to low.
   }
   if(notesPlaying[1] == *releasedNote){
     carrierEnvelopeStatus[1] = 4; 
     FMEnvelopeStatus[1] = 4;
+    PORTC &=~ chanDebugMask[1];
   }
   if(notesPlaying[2] == *releasedNote){
     carrierEnvelopeStatus[2] = 4; 
     FMEnvelopeStatus[2] = 4;
+    PORTC &=~ chanDebugMask[2];
   }
   if(notesPlaying[3] == *releasedNote){
     carrierEnvelopeStatus[3] = 4; 
     FMEnvelopeStatus[3] = 4;
+    PORTC &=~ chanDebugMask[3];
   }
 }
 
@@ -434,9 +449,10 @@ inline void setEnvelopes(){
 */
 void loop() {
   //First, get input and interpret it. 
-
+  PORTC |= loopFlagMask;//Set flag high
   prevInputStatus = inputStatus;
   inputStatus = PIND;
+  PORTC &=~ loopFlagMask;
   byte pressedNote = 255;
   byte releasedNote = 255;
   
@@ -454,7 +470,7 @@ void loop() {
   assignChannel(&pressedNote, &channel);
 
   updatePulseWidth();//3rd call
-
+  
   if(pressedNote != 255){
     startNote(&channel, &pressedNote);
   }
@@ -462,7 +478,7 @@ void loop() {
   updatePulseWidth();//4th call
 
   if(releasedNote != 255){
-    stopNote(&channel, &releasedNote);
+    stopNote(&releasedNote);
   }
 
   updatePulseWidth();//5th call
@@ -480,4 +496,6 @@ void loop() {
   noteDuration[1]++;
   noteDuration[2]++;
   noteDuration[3]++;
+
+  updatePulseWidth();//15th call
 }
