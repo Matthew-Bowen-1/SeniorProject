@@ -63,24 +63,25 @@ byte prevInputStatus = 0;
 
 //Sound properties. Initialized within setup so that later they may be changed.
 byte         loudness = 64; //Overall loudness
-byte         noteRange = hiMid; //Range of notes
+byte         noteRange = loMid; //Range of notes
 //ADSR for carrier amplitude
 unsigned int carrierAttack = 4096;
 unsigned int carrierDecay = 512;
 unsigned int carrierSustain = 220;
-unsigned int carrierRelease = 512;
+unsigned int carrierRelease = 128;
 
-unsigned int FMLoudness = 2;
-unsigned int FMRatio = 128;//Ratio relative to carrier where carrier = 256 
-unsigned int FMAttack = 0xFFFF; 
-unsigned int FMDecay = 128;
-unsigned int FMSustain = 16384;
+unsigned int FMLoudness = 3;
+unsigned int FMRatio = 256+128;//Ratio relative to carrier where carrier = 256 
+unsigned int FMAttack = 0x800; 
+unsigned int FMDecay = 32;
+unsigned int FMSustain = 8192;
 unsigned int FMRelease = 82;
 //Basic default setup. Hopefully makes good sound. 
 
 //Used to set channel diagnostic bits.
 byte chanDebugMask[4];
 byte loopFlagMask;
+byte oScopeTrigMask;
 void setup() {
   // put your setup code here, to run once:
   noInterrupts();
@@ -117,12 +118,14 @@ void setup() {
   //Initialize prevInputStatus so nothing happens on startup.
 
   //Arduino Pins D14-D17 go high when a channel is playing. Used for debugging.
-  DDRC = DDRC | 0B00011111; //Set Port C pins 0-4 to output. 
-  PORTC = PORTC & 0B11100000; //Initialize Port C pins 0-4 to low.
+  DDRC = DDRC | 0B00111111; //Set Port C pins 0-5 to output. 
+  PORTC = PORTC & 0B11000000; //Initialize Port C pins 0-5 to low.
   for(int i = 0; i < 4; i++){
     chanDebugMask[i] = 1 << i;
   }
-  loopFlagMask = 1 << 4;
+  loopFlagMask = 1 << 4;//Mask for loop flag.
+  oScopeTrigMask = 1 << 5;//Mask for triggering oscilloscope. Not working.
+
 }
 
 /*
@@ -148,12 +151,14 @@ inline void updatePulseWidth() __attribute__((always_inline));
 inline void updatePulseWidth() {
 
   //Wait until timer overflows then clear overflow bit.
-  while((TIFR1 & 0B00000001) != 1);
-  TIFR1 |= 0B00000001; 
+  // while((TIFR1 & 0B00000001) != 1);
+  // TIFR1 |= 0B00000001; 
   //Bit 0 of TIFR1 is the timer overflow bit.
   //For some reason it is cleared by writing a 1 to it. 
   //I may experiment with putting the waiting section after the calculations
   //but before the assignment of OCR1A
+  
+  //As it turns out the while loop can occur anywhere in this sequence.
 
   //Update the phase index of each modulator
   FMPhaseIdx[0] += FMPhaseInc[0];
@@ -181,6 +186,15 @@ inline void updatePulseWidth() {
 
   pulseWidth += sine[(carrierPhaseIdx[3] + sine[FMPhaseIdx[3] >> 8] * 
   FMAmplitude[3]) >> 8] * carrierAmplitude[3];
+
+  // if(carrierPhaseIdx[0] < 64){
+  //   PORTC |= oScopeTrigMask;//Set high to indicate the low portion of a note
+  // }else if (carrierPhaseIdx[0] >= 64){
+  //   PORTC &=~ oScopeTrigMask;
+  // } Currently not functional.
+
+  while((TIFR1 & 0B00000001) != 1);
+  TIFR1 |= 0B00000001;
 
   OCR1A = pulseWidth/128 + 256;
 }
@@ -285,9 +299,9 @@ inline void assignChannel(byte *pressedNote, byte *channel){
   //Use a channel if it is empty
   if(*channel == 255){
     if(carrierEnvelopeStatus[0] == off) *channel = 0;
-    if(carrierEnvelopeStatus[1] == off) *channel = 1;
-    if(carrierEnvelopeStatus[2] == off) *channel = 2;
-    if(carrierEnvelopeStatus[3] == off) *channel = 3;
+    else if(carrierEnvelopeStatus[1] == off) *channel = 1;
+    else if(carrierEnvelopeStatus[2] == off) *channel = 2;
+    else if(carrierEnvelopeStatus[3] == off) *channel = 3;
   }
 
   //Determine the longest playing channel and use that
@@ -348,6 +362,7 @@ inline void stopNote(byte *releasedNote){
     FMEnvelopeStatus[3] = 4;
     PORTC &=~ chanDebugMask[3];
   }
+  //If the received note isn't playing anyway then do nothing.
 }
 
 inline void calculateFMEnvelope() __attribute__((always_inline));
@@ -452,7 +467,7 @@ void loop() {
   PORTC |= loopFlagMask;//Set flag high
   prevInputStatus = inputStatus;
   inputStatus = PIND;
-  PORTC &=~ loopFlagMask;
+  PORTC &=~ loopFlagMask;//Set flag low
   byte pressedNote = 255;
   byte releasedNote = 255;
   

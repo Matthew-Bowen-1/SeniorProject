@@ -36,51 +36,6 @@ byte configVal = 0B00000001;
 byte configValMask = 0B00000001;
 bool configState = false;
 
-//useful to keep track of what note is being played by the core.
-byte notesPlaying[4] = {0,0,0,0};
-byte numNotes = 0;
-
-//Pass this function note=0 if just removing the note.
-void replaceNote(int idx, byte note){
-  if(idx >=0 && idx <= 3){
-    for(int i=idx; i<=3; i++){
-      if(i == 3){
-        notesPlaying[i] = note;
-      }
-      else{
-        notesPlaying[i] = notesPlaying[i+1];
-      }
-    }
-  }
-}
-
-void removeNote(byte idx){
-  if(idx >=0 && idx <= 3){
-    for(byte i=idx; i<=3; i++){
-      if(i == 3){
-        notesPlaying[i] = 0;
-      }
-      else{
-        notesPlaying[i] = notesPlaying[i+1];
-      }
-    }    
-  }
-}
-/*
-  Check if a note is playing.
-  If it is, return the index of the note in notesPlaying[].
-  If it isn't, return -1
-*/
-byte getNotePlayingIdx(byte note){
-  byte notePlayingIdx = 255;
-  for(byte i=0; i<=3; i++){
-    if(notesPlaying[i] == note){
-      notePlayingIdx = i;
-    }
-  }
-  return notePlayingIdx;
-}
-
 byte getNoteVal(byte note){
   return note % 12;
 }
@@ -110,13 +65,6 @@ void HandleNoteOn(byte channel, byte note, byte velocity){
   //Set note and octave values based upon incoming midi signal
   //If note is outside range, do nothing.
   if(note >= 48 && note <= 95){
-    if(numNotes == 4){
-      replaceNote(0, note); //kick out note zero. Add new note
-    }
-    if(numNotes < 4){
-      notesPlaying[numNotes] = note;
-      numNotes++;
-    }
     octVal = getOctVal(note);
     noteVal = getNoteVal(note);
     control = noteOn;
@@ -126,20 +74,14 @@ void HandleNoteOn(byte channel, byte note, byte velocity){
 /*
   Uses note value to tell synth core which note to disable.
   This function only reacts to MIDI noteOff commands.
-  If a 5th note is played, this function is not responsible for turning off
-  the oldest note. The synth core handles that itself.
   This function tells the synth to turn off a note when it gets a MIDI
-  noteOff command for that note so long as the note is in notesPlaying[]
+  noteOff command for that note.
 
 */
 void HandleNoteOff(byte channel, byte note, byte velocity){
-  byte noteIdx = getNotePlayingIdx(note);
-  if(noteIdx != 255){
-    removeNote(noteIdx);
-    noteVal = getNoteVal(note);
-    octVal = getOctVal(note);
-    control = noteOff;
-  }
+  noteVal = getNoteVal(note);
+  octVal = getOctVal(note);
+  control = noteOff;
 }
 
 void setup() {
@@ -171,7 +113,7 @@ void setup() {
   PORTF |= 0B00000001;
 }
 byte prevBusVal;
-byte repeatCount = 0;
+byte repeatCount = 0;//Tracks how many times the current signal has been displayed.
 byte prevConfigVal;
 
 void loop() {
@@ -209,6 +151,8 @@ void loop() {
   busVal = (busVal & ~octMask) | (octVal & octMask);
   //set numNotes value
   busVal = (busVal & ~controlMask) | (control & controlMask);
+
+
 
   //set all pins of PORTB simultaneously 
 
