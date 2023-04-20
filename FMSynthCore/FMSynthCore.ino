@@ -71,7 +71,7 @@ unsigned int carrierSustain = 220;
 unsigned int carrierRelease = 128;
 
 unsigned int FMLoudness = 3;
-unsigned int FMRatio = 256+128;//Ratio relative to carrier where carrier = 256 
+unsigned int FMRatio = 384;//Ratio relative to carrier where carrier = 256 
 unsigned int FMAttack = 0x800; 
 unsigned int FMDecay = 32;
 unsigned int FMSustain = 8192;
